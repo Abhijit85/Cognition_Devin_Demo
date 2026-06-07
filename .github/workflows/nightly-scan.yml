@@ -1,0 +1,43 @@
+name: Nightly CVE scan
+
+# This is the "event-driven trigger" for the orchestrator.
+# Two triggers, same handler:
+#   1. Scheduled (daily 09:00 UTC) — proves out the periodic case
+#   2. Manual (workflow_dispatch)   — for demo recording
+#
+# In a real customer deployment this would either:
+#   (a) hit a public orchestrator endpoint (this pattern), or
+#   (b) be a self-hosted runner that posts to a VPC-internal endpoint, or
+#   (c) be replaced entirely by a Devin Schedule via POST /v3/.../schedules.
+#
+# Option (a) is shown here because it's the easiest to demo.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger orchestrator scan
+        env:
+          ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
+          ORCHESTRATOR_TOKEN: ${{ secrets.ORCHESTRATOR_TOKEN }}
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -X POST \
+            -H "Authorization: Bearer $ORCHESTRATOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$ORCHESTRATOR_URL/scan/run")
+          echo "Orchestrator response: $response"
+          run_id=$(echo "$response" | jq -r .run_id)
+          echo "Started run: $run_id"
+          echo "RUN_ID=$run_id" >> "$GITHUB_ENV"
+
+      - name: Summary
+        run: |
+          echo "### Nightly CVE Scan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Run ID: \`${{ env.RUN_ID }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Dashboard: ${{ secrets.DASHBOARD_URL }}" >> "$GITHUB_STEP_SUMMARY"

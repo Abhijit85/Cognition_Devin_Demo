@@ -1,0 +1,53 @@
+services:
+  orchestrator:
+    build: .
+    image: devin-cve-remediation:latest
+    container_name: cve-orchestrator
+    ports:
+      - "8000:8000"
+    environment:
+      DEVIN_API_KEY: ${DEVIN_API_KEY:-}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      DEVIN_MOCK: ${DEVIN_MOCK:-0}
+      GH_TOKEN: ${GH_TOKEN:-}
+      GH_REPO: ${GH_REPO:-}
+      REPO_PATH: /repo
+      POLL_INTERVAL: ${POLL_INTERVAL:-30}
+      DATABASE_PATH: /data/orchestrator.db
+    volumes:
+      - state:/data
+      - ${REPO_PATH:-./fixture-repo}:/repo:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  dashboard:
+    image: devin-cve-remediation:latest
+    container_name: cve-dashboard
+    depends_on:
+      - orchestrator
+    ports:
+      - "8501:8501"
+    environment:
+      DEVIN_API_KEY: ${DEVIN_API_KEY:-}
+      DEVIN_ORG_ID: ${DEVIN_ORG_ID:-}
+      DEVIN_MOCK: ${DEVIN_MOCK:-0}
+      DEV_HOURLY_RATE: ${DEV_HOURLY_RATE:-150}
+      DEV_HOURS_PER_CVE_BASELINE: ${DEV_HOURS_PER_CVE_BASELINE:-4}
+      ACU_COST: ${ACU_COST:-2.25}
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      DATABASE_PATH: /data/orchestrator.db
+    volumes:
+      - state:/data
+    command: >
+      streamlit run dashboard/app.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+    restart: unless-stopped
+
+volumes:
+  state:
