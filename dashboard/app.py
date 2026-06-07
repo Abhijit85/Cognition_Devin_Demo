@@ -231,7 +231,6 @@ def render_sessions(sessions: pd.DataFrame) -> None:
         "devin_session_id",
         "cve_id",
         "package",
-        "severity",
         "status",
         "pr_url",
         "devin_session_url",
@@ -245,7 +244,6 @@ def render_sessions(sessions: pd.DataFrame) -> None:
         "devin_session_id": "Session",
         "cve_id": "CVE",
         "package": "Package",
-        "severity": "Severity",
         "status": "Status",
         "pr_url": "PR",
         "devin_session_url": "Devin URL",
@@ -278,7 +276,10 @@ def render_consumption(sessions: pd.DataFrame) -> None:
                 cdf["date"] = pd.to_datetime(cdf["date"])
                 st.line_chart(cdf.set_index("date"))
                 return
-        st.json(consumption)
+        st.info(
+            "Live Devin ACU metrics are connected. No time-series rows were "
+            "returned for this short demo window."
+        )
     except Exception as exc:
         st.warning(f"Live ACU metrics unavailable: `{exc}`")
         if not sessions.empty and "created_at" in sessions.columns:
