@@ -47,6 +47,25 @@ a **productizable playbook** that maps directly to a GSI service line
 offering. See [`docs/partner-playbook.md`](docs/partner-playbook.md) for
 the full partner story.
 
+**Companion Superset fork.** The real remediation target is
+[`Abhijit85/superset`](https://github.com/Abhijit85/superset). See the
+[selected issues](https://github.com/Abhijit85/superset/issues?q=label%3Ademo-selected)
+and [Devin remediation PRs](https://github.com/Abhijit85/superset/pulls)
+for observable proof that the workflow ran against Apache Superset.
+
+---
+
+## Dashboard Preview
+
+![Populated Devin CVE Remediation dashboard](docs/screenshots/dashboard.png)
+
+The local dashboard runs at `http://localhost:8501` during development,
+but that URL is not a hosted demo link. Use this screenshot or the Loom
+walkthrough for submission review.
+
+See [`docs/demo-evidence.md`](docs/demo-evidence.md) for the concrete
+issue, PR, and Devin session links.
+
 ---
 
 ## Quickstart
@@ -78,6 +97,9 @@ docker compose up --build
 Then:
 - Orchestrator API: <http://localhost:8000/docs>
 - Dashboard: <http://localhost:8501>
+
+These are local development URLs; they only resolve on the machine
+running Docker Compose.
 
 ### Run in mock mode (no Devin account needed)
 
@@ -256,4 +278,4 @@ dashboard — are the parts that get reused. Everything is the template.
 
 ## License
 
-MIT. Built as a take-home for Cognition.
+Apache-2.0. Built as a take-home for Cognition.

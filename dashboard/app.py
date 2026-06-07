@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import altair as alt
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -39,6 +40,11 @@ DEV_HOURS_PER_CVE_BASELINE = float(
     os.environ.get("DEV_HOURS_PER_CVE_BASELINE", "4")
 )
 ACU_COST = float(os.environ.get("ACU_COST", "2.25"))
+SELECTED_ISSUES = {
+    int(value.strip())
+    for value in os.environ.get("SELECTED_ISSUE_NUMBERS", "1,3,4").split(",")
+    if value.strip()
+}
 
 
 def api_get(path: str) -> Any:
@@ -70,6 +76,56 @@ def load_state() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
         return findings, sessions, runs, False
 
 
+def add_issue_number(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "github_issue_url" not in frame.columns:
+        return frame
+
+    result = frame.copy()
+    result["issue_number"] = (
+        result["github_issue_url"]
+        .fillna("")
+        .astype(str)
+        .str.rstrip("/")
+        .str.extract(r"/issues/(\d+)$")[0]
+    )
+    result["issue_number"] = pd.to_numeric(
+        result["issue_number"], errors="coerce",
+    ).astype("Int64")
+    return result
+
+
+def scoped_data(
+    findings: pd.DataFrame,
+    sessions: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    findings = add_issue_number(findings)
+    sessions = add_issue_number(sessions)
+
+    real_findings = findings
+    if "github_issue_url" in real_findings.columns:
+        real_findings = real_findings[
+            real_findings["github_issue_url"].fillna("").astype(str) != ""
+        ]
+
+    real_sessions = sessions
+    if "devin_session_id" in real_sessions.columns:
+        real_sessions = real_sessions[
+            ~real_sessions["devin_session_id"].astype(str).str.startswith("devin-mock")
+        ]
+    if "github_issue_url" in real_sessions.columns:
+        real_sessions = real_sessions[
+            real_sessions["github_issue_url"].fillna("").astype(str) != ""
+        ]
+
+    selected_findings = real_findings[
+        real_findings["issue_number"].isin(SELECTED_ISSUES)
+    ]
+    selected_sessions = real_sessions[
+        real_sessions["issue_number"].isin(SELECTED_ISSUES)
+    ]
+    return real_findings, real_sessions, selected_findings, selected_sessions
+
+
 def render_empty_state(api_available: bool) -> None:
     st.info("No findings yet. Trigger a scan from the dashboard or API.")
     if not api_available:
@@ -96,12 +152,17 @@ def render_controls(api_available: bool) -> None:
         st.caption(f"API: `{ORCHESTRATOR_URL}` · {status}")
 
 
-def render_metrics(findings: pd.DataFrame, sessions: pd.DataFrame) -> None:
-    total_findings = len(findings)
-    in_progress = int((findings["status"] == "in_progress").sum())
-    pr_open = int((findings["status"] == "pr_open").sum())
-    failed = int((findings["status"] == "failed").sum())
-    sessions_total = len(sessions)
+def render_metrics(
+    real_findings: pd.DataFrame,
+    selected_findings: pd.DataFrame,
+    selected_sessions: pd.DataFrame,
+) -> None:
+    selected_total = len(selected_findings)
+    deferred = int((real_findings["status"] == "deferred").sum())
+    in_progress = int((selected_findings["status"] == "in_progress").sum())
+    pr_open = int((selected_findings["status"] == "pr_open").sum())
+    failed = int((selected_findings["status"] == "failed").sum())
+    sessions_total = len(selected_sessions)
 
     gross_savings = pr_open * DEV_HOURS_PER_CVE_BASELINE * DEV_HOURLY_RATE
     estimated_acu_per_session = 2.0
@@ -109,9 +170,9 @@ def render_metrics(findings: pd.DataFrame, sessions: pd.DataFrame) -> None:
     net_savings = gross_savings - cost
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Findings discovered", total_findings)
-    c2.metric("Sessions in flight", in_progress)
-    c3.metric("PRs open", pr_open, delta=f"{failed} failed" if failed else None)
+    c1.metric("Selected findings", selected_total)
+    c2.metric("Deferred evidence", deferred)
+    c3.metric("Selected PRs open", pr_open, delta=f"{in_progress} in flight")
     c4.metric(
         "Net $ saved",
         f"${net_savings:,.0f}",
@@ -120,32 +181,53 @@ def render_metrics(findings: pd.DataFrame, sessions: pd.DataFrame) -> None:
     )
 
 
-def render_funnel(findings: pd.DataFrame, sessions: pd.DataFrame) -> None:
-    sessions_done = (
-        int((sessions["status"] == "exit").sum()) if not sessions.empty else 0
-    )
-    pr_open = int((findings["status"] == "pr_open").sum())
+def render_funnel(
+    real_findings: pd.DataFrame,
+    selected_findings: pd.DataFrame,
+    selected_sessions: pd.DataFrame,
+) -> None:
+    pr_open = int((selected_findings["status"] == "pr_open").sum())
+    deferred = int((real_findings["status"] == "deferred").sum())
     funnel_data = pd.DataFrame({
         "stage": [
-            "Discovered",
-            "Session spawned",
-            "Session completed",
-            "PR open",
-            "Merged",
+            "Selected",
+            "Sessions spawned",
+            "PRs open",
+            "Deferred scan evidence",
         ],
-        "count": [len(findings), len(sessions), sessions_done, pr_open, 0],
+        "count": [
+            len(selected_findings),
+            len(selected_sessions),
+            pr_open,
+            deferred,
+        ],
     })
-    st.subheader("Remediation funnel")
-    st.bar_chart(funnel_data.set_index("stage"))
+    st.subheader("Curated remediation funnel")
+    chart = (
+        alt.Chart(funnel_data)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "stage:N",
+                sort=funnel_data["stage"].tolist(),
+                title=None,
+                axis=alt.Axis(labelAngle=0),
+            ),
+            y=alt.Y("count:Q", title=None),
+            tooltip=["stage", "count"],
+        )
+    )
+    st.altair_chart(chart, use_container_width=True)
 
 
 def render_sessions(sessions: pd.DataFrame) -> None:
-    st.subheader("In-flight work")
+    st.subheader("Selected Devin PRs")
     if sessions.empty:
         st.write("_No sessions yet._")
         return
 
     columns = [
+        "issue_number",
         "devin_session_id",
         "cve_id",
         "package",
@@ -156,7 +238,10 @@ def render_sessions(sessions: pd.DataFrame) -> None:
         "created_at",
     ]
     display = sessions[[c for c in columns if c in sessions.columns]].copy()
+    if "pr_url" in display.columns and "status" in display.columns:
+        display.loc[display["pr_url"].fillna("").astype(str) != "", "status"] = "pr_open"
     display = display.rename(columns={
+        "issue_number": "Issue",
         "devin_session_id": "Session",
         "cve_id": "CVE",
         "package": "Package",
@@ -226,22 +311,28 @@ def render_runs(runs: pd.DataFrame) -> None:
 
 def main() -> None:
     st.title("Devin CVE Remediation")
-    st.caption("Event-driven dependency remediation pipeline powered by Devin")
+    st.caption("Curated Apache Superset dependency remediation powered by Devin")
 
     findings, sessions, runs, api_available = load_state()
+    real_findings, real_sessions, selected_findings, selected_sessions = scoped_data(
+        findings, sessions,
+    )
     render_controls(api_available)
 
-    if findings.empty:
+    if real_findings.empty:
         render_empty_state(api_available)
         return
 
-    render_metrics(findings, sessions)
+    st.caption(
+        "Selected scope: Flask, PyArrow, and PyJWT. Lower-signal scan findings are retained as deferred evidence."
+    )
+    render_metrics(real_findings, selected_findings, selected_sessions)
     st.divider()
-    render_funnel(findings, sessions)
+    render_funnel(real_findings, selected_findings, selected_sessions)
     st.divider()
-    render_sessions(sessions)
+    render_sessions(selected_sessions)
     st.divider()
-    render_consumption(sessions)
+    render_consumption(real_sessions)
     st.divider()
     render_runs(runs)
 
